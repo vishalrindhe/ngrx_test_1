@@ -5,6 +5,7 @@ import { map, tap } from 'rxjs/operators';
 import { NavigationCancel, NavigationEnd, NavigationError, NavigationStart, Router } from '@angular/router';
 import { AppState } from './reducers';
 import { isLogggedIn, isLogggedOut } from './auth/auth.selector';
+import { logout } from './auth/auth.actions';
 
 @Component({
   selector: 'app-root',
@@ -53,7 +54,7 @@ export class AppComponent implements OnInit {
   }
 
   logout() {
-
+    this.store.dispatch(logout())
   }
 
 }

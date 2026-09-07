@@ -1,21 +1,749 @@
-MIT License
+import { HttpErrorResponse } from '@angular/common/http';
+import { createServiceFactory, SpectatorService } from '@ngneat/spectator/jest';
+import { Subject, of, throwError } from 'rxjs';
 
-Copyright (c) 2018 Angular University
+import {
+  IkcCkdPatientsStore,
+  IkcCkdPatientsState,
+} from './ikc-ckd-patient-store';
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+import { IkcCkdPatientsService } from './ikc-ckd-patients.service';
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+describe('IkcCkdPatientsStore', () => {
+  let spectator: SpectatorService<IkcCkdPatientsStore>;
+  let store: IkcCkdPatientsStore;
+  let service: jest.Mocked<IkcCkdPatientsService>;
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+  const createStore = createServiceFactory({
+    service: IkcCkdPatientsStore,
+    mocks: [IkcCkdPatientsService],
+  });
+
+  const baseParams = {
+    caseType: 'CASE_TYPE',
+    version: 'V1',
+  };
+
+  const patients = [
+    {
+      id: '1',
+      name: 'Patient 1',
+    },
+    {
+      id: '2',
+      name: 'Patient 2',
+    },
+  ];
+
+  const ikcPrograms = [
+    {
+      id: 'program-1',
+      name: 'Program 1',
+    },
+  ];
+
+  beforeEach(() => {
+    spectator = createStore();
+
+    store = spectator.service;
+    service = spectator.inject(IkcCkdPatientsService);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Initial state
+  // ---------------------------------------------------------------------------
+
+  describe('initial state', () => {
+    it('should initialize with the expected state', () => {
+      expect(store.npi()).toBeNull();
+      expect(store.ikcPrograms()).toEqual([]);
+      expect(store.patients()).toEqual([]);
+      expect(store.isLoading()).toBe(true);
+      expect(store.patientsLoaded()).toBe(false);
+      expect(store.error()).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // loadPatients()
+  // ---------------------------------------------------------------------------
+
+  describe('loadPatients', () => {
+    beforeEach(() => {
+      service.getBaseParams.mockReturnValue(baseParams as any);
+    });
+
+    it('should call getBaseParams with caseType and version', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V2',
+        npi: '12345',
+      });
+
+      expect(service.getBaseParams).toHaveBeenCalledTimes(1);
+      expect(service.getBaseParams).toHaveBeenCalledWith(
+        'CKD',
+        'V2'
+      );
+    });
+
+    it('should add npi to params when npi is supplied', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V2',
+        npi: '12345',
+      });
+
+      expect(service.getIkcCkdPatientListData).toHaveBeenCalledWith({
+        ...baseParams,
+        npi: '12345',
+      });
+    });
+
+    it('should not add npi when npi is undefined', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V2',
+      });
+
+      expect(service.getIkcCkdPatientListData).toHaveBeenCalledWith(
+        baseParams
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // No NPI
+    // -------------------------------------------------------------------------
+
+    it('should not call API when final params do not contain an npi', () => {
+      service.getBaseParams.mockReturnValue({
+        caseType: 'CKD',
+        version: 'V1',
+      } as any);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).not.toHaveBeenCalled();
+    });
+
+    // -------------------------------------------------------------------------
+    // Same NPI + already loaded
+    // -------------------------------------------------------------------------
+
+    it('should not call API when same npi is already loaded', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      // First request
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledTimes(1);
+
+      // Second request with same NPI
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call API when same npi exists but patients are not loaded', () => {
+      const response$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData.mockReturnValue(response$);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      // Store has NPI, but patientsLoaded is still false
+      expect(store.npi()).toBe('12345');
+      expect(store.patientsLoaded()).toBe(false);
+
+      // Call again with same NPI
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledTimes(2);
+    });
+
+    // -------------------------------------------------------------------------
+    // Different NPI
+    // -------------------------------------------------------------------------
+
+    it('should call API when npi changes', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '11111',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledTimes(1);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '22222',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledTimes(2);
+
+      expect(store.npi()).toBe('22222');
+    });
+
+    // -------------------------------------------------------------------------
+    // State before API response
+    // -------------------------------------------------------------------------
+
+    it('should reset state and set npi before API response', () => {
+      const response$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData.mockReturnValue(response$);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.npi()).toBe('12345');
+      expect(store.ikcPrograms()).toEqual([]);
+      expect(store.patients()).toEqual([]);
+      expect(store.isLoading()).toBe(true);
+      expect(store.patientsLoaded()).toBe(false);
+      expect(store.error()).toBeNull();
+    });
+
+    // -------------------------------------------------------------------------
+    // Success
+    // -------------------------------------------------------------------------
+
+    it('should update state when API succeeds', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.ikcPrograms()).toEqual(ikcPrograms);
+      expect(store.patients()).toEqual(patients);
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+      expect(store.error()).toBeNull();
+    });
+
+    it('should preserve npi after successful API response', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.npi()).toBe('12345');
+    });
+
+    // -------------------------------------------------------------------------
+    // Empty response
+    // -------------------------------------------------------------------------
+
+    it('should set empty arrays when response does not contain ikcPrograms or patients', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({}) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.ikcPrograms()).toEqual([]);
+      expect(store.patients()).toEqual([]);
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+      expect(store.error()).toBeNull();
+    });
+
+    it('should set empty arrays when response contains null values', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms: null,
+          patients: null,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.ikcPrograms()).toEqual([]);
+      expect(store.patients()).toEqual([]);
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+    });
+
+    // -------------------------------------------------------------------------
+    // Error
+    // -------------------------------------------------------------------------
+
+    it('should update error state when API fails', () => {
+      const error = new HttpErrorResponse({
+        status: 500,
+        statusText: 'Internal Server Error',
+        error: {
+          message: 'Something went wrong',
+        },
+      });
+
+      service.getIkcCkdPatientListData.mockReturnValue(
+        throwError(() => error)
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+      expect(store.error()).toBe(error);
+    });
+
+    it('should not replace existing error with null before a new request completes', () => {
+      const error = new HttpErrorResponse({
+        status: 500,
+      });
+
+      service.getIkcCkdPatientListData
+        .mockReturnValueOnce(
+          throwError(() => error)
+        )
+        .mockReturnValueOnce(
+          of({
+            ikcPrograms,
+            patients,
+          }) as any
+        );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '11111',
+      });
+
+      expect(store.error()).toBe(error);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '22222',
+      });
+
+      expect(store.error()).toBeNull();
+    });
+
+    // -------------------------------------------------------------------------
+    // Loading state
+    // -------------------------------------------------------------------------
+
+    it('should remain loading until API emits a response', () => {
+      const response$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData.mockReturnValue(response$);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.isLoading()).toBe(true);
+      expect(store.patientsLoaded()).toBe(false);
+
+      response$.next({
+        ikcPrograms,
+        patients,
+      });
+
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+    });
+
+    // -------------------------------------------------------------------------
+    // switchMap cancellation
+    // -------------------------------------------------------------------------
+
+    it('should ignore the previous API response when a new request is made', () => {
+      const firstResponse$ = new Subject<any>();
+      const secondResponse$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData
+        .mockImplementation((params: any) => {
+          if (params.npi === '11111') {
+            return firstResponse$ as any;
+          }
+
+          return secondResponse$ as any;
+        });
+
+      // First request
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '11111',
+      });
+
+      expect(store.npi()).toBe('11111');
+
+      // Second request should cancel the first one
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '22222',
+      });
+
+      expect(store.npi()).toBe('22222');
+
+      // First API responds late
+      firstResponse$.next({
+        ikcPrograms: [{ id: 'old-program' }],
+        patients: [{ id: 'old-patient' }],
+      });
+
+      // Old response must NOT update the store
+      expect(store.npi()).toBe('22222');
+      expect(store.patients()).toEqual([]);
+
+      // Latest request responds
+      secondResponse$.next({
+        ikcPrograms: [{ id: 'new-program' }],
+        patients: [{ id: 'new-patient' }],
+      });
+
+      expect(store.npi()).toBe('22222');
+      expect(store.ikcPrograms()).toEqual([
+        { id: 'new-program' },
+      ]);
+      expect(store.patients()).toEqual([
+        { id: 'new-patient' },
+      ]);
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+    });
+
+    // -------------------------------------------------------------------------
+    // Base params containing NPI
+    // -------------------------------------------------------------------------
+
+    it('should use npi returned by getBaseParams when input npi is undefined', () => {
+      service.getBaseParams.mockReturnValue({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '99999',
+      } as any);
+
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+      });
+
+      expect(
+        service.getIkcCkdPatientListData
+      ).toHaveBeenCalledWith({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '99999',
+      });
+
+      expect(store.npi()).toBe('99999');
+      expect(store.patientsLoaded()).toBe(true);
+    });
+
+    // -------------------------------------------------------------------------
+    // Multiple sequential requests
+    // -------------------------------------------------------------------------
+
+    it('should reset previous patient data when npi changes', () => {
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '11111',
+      });
+
+      expect(store.patients()).toEqual(patients);
+      expect(store.ikcPrograms()).toEqual(ikcPrograms);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '22222',
+      });
+
+      // The store is reset before the second response.
+      expect(store.npi()).toBe('22222');
+      expect(store.isLoading()).toBe(false);
+      expect(store.patientsLoaded()).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Computed
+  // ---------------------------------------------------------------------------
+
+  describe('allIkcCkdPatientListItems', () => {
+    it('should call patientDataToIkcCkdPatientListItems with patients', () => {
+      const transformedPatients = [
+        {
+          id: '1',
+          displayName: 'Patient 1',
+        },
+      ];
+
+      service.patientDataToIkcCkdPatientListItems.mockReturnValue(
+        transformedPatients as any
+      );
+
+      service.getBaseParams.mockReturnValue(baseParams as any);
+
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      const result = store.allIkcCkdPatientListItems();
+
+      expect(
+        service.patientDataToIkcCkdPatientListItems
+      ).toHaveBeenCalledTimes(1);
+
+      expect(
+        service.patientDataToIkcCkdPatientListItems
+      ).toHaveBeenCalledWith(patients);
+
+      expect(result).toEqual(transformedPatients);
+    });
+
+    it('should return the transformed result from the service', () => {
+      const transformedPatients = [
+        {
+          id: '1',
+          displayName: 'Patient 1',
+        },
+        {
+          id: '2',
+          displayName: 'Patient 2',
+        },
+      ];
+
+      service.patientDataToIkcCkdPatientListItems.mockReturnValue(
+        transformedPatients as any
+      );
+
+      service.getBaseParams.mockReturnValue(baseParams as any);
+
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      expect(store.allIkcCkdPatientListItems()).toEqual(
+        transformedPatients
+      );
+    });
+
+    it('should recompute when patients change', () => {
+      const firstResult = [
+        {
+          id: '1',
+        },
+      ];
+
+      const secondResult = [
+        {
+          id: '2',
+        },
+      ];
+
+      service.patientDataToIkcCkdPatientListItems
+        .mockReturnValueOnce(firstResult as any)
+        .mockReturnValueOnce(secondResult as any);
+
+      service.getBaseParams.mockReturnValue(baseParams as any);
+
+      const response$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData.mockReturnValue(response$);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      response$.next({
+        ikcPrograms: [],
+        patients: [{ id: '1' }],
+      });
+
+      expect(store.allIkcCkdPatientListItems()).toEqual(
+        firstResult
+      );
+
+      // New request with different NPI
+      const response2$ = new Subject<any>();
+
+      service.getIkcCkdPatientListData.mockReturnValue(response2$);
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '67890',
+      });
+
+      response2$.next({
+        ikcPrograms: [],
+        patients: [{ id: '2' }],
+      });
+
+      expect(store.allIkcCkdPatientListItems()).toEqual(
+        secondResult
+      );
+    });
+
+    it('should pass a cloned patients array to the transformation service', () => {
+      service.patientDataToIkcCkdPatientListItems.mockReturnValue(
+        [] as any
+      );
+
+      service.getBaseParams.mockReturnValue(baseParams as any);
+
+      service.getIkcCkdPatientListData.mockReturnValue(
+        of({
+          ikcPrograms,
+          patients,
+        }) as any
+      );
+
+      store.loadPatients({
+        caseType: 'CKD',
+        version: 'V1',
+        npi: '12345',
+      });
+
+      store.allIkcCkdPatientListItems();
+
+      const argument =
+        service.patientDataToIkcCkdPatientListItems.mock.calls[0][0];
+
+      expect(argument).toEqual(patients);
+
+      // JSON clone means it should not be the same array reference.
+      expect(argument).not.toBe(store.patients());
+    });
+  });
+});
